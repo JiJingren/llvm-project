@@ -189,7 +189,7 @@ FLAGS+=" -L$SYSROOT_PATH/lib -L/usr/lib/$TARGET_ARCH"
 FLAGS+=" -L$SYSROOT_PATH/../lib/gcc-cross/$TARGET_ARCH/$GCC_VERSION"
 
 echo "[!] Build tapi"
-git clone --depth=1 https://github.com/l1ghtmann/apple-libtapi -b tapi-link-fix
+git clone --depth=1 https://github.com/tpoechtrager/apple-libtapi
 cd apple-libtapi
 # build tapi-catered llvm/clang-tblgen for host with support for host and target
 cmake -Wno-dev -B build-tblgens -G "Ninja" \

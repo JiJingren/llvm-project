@@ -112,7 +112,7 @@ make -j$PROC DESTDIR="$WDIR/linux/iphone/" \
 				|| { echo "[!] ldid build failure"; exit 1; }
 
 echo "[!] Build tapi"
-git clone https://github.com/l1ghtmann/apple-libtapi -b tapi-link-fix
+git clone https://github.com/tpoechtrager/apple-libtapi
 cd apple-libtapi
 cmake -Wno-dev -B build-tblgens -G "Ninja" \
 	-DLLVM_ENABLE_PROJECTS="clang" \
