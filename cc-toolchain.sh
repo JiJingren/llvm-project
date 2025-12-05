@@ -189,7 +189,7 @@ FLAGS+=" -L$SYSROOT_PATH/lib -L/usr/lib/$TARGET_ARCH"
 FLAGS+=" -L$SYSROOT_PATH/../lib/gcc-cross/$TARGET_ARCH/$GCC_VERSION"
 
 echo "[!] Build tapi"
-git clone --depth=1 https://github.com/tpoechtrager/apple-libtapi
+git clone --depth=1 https://github.com/tpoechtrager/apple-libtapi -b 1300.6.5
 cd apple-libtapi
 # build tapi-catered llvm/clang-tblgen for host with support for host and target
 cmake -Wno-dev -B build-tblgens -G "Ninja" \
@@ -244,7 +244,7 @@ cmake --build build --target install -- -j$PROC \
 	|| { echo "[!] libdispatch build failure"; exit 1; }
 
 echo "[!] Build cctools"
-git clone --depth=1 https://github.com/tpoechtrager/cctools-port/
+git clone --depth=1 https://github.com/tpoechtrager/cctools-port/ -b 1010.6-ld64-951.9
 ./cctools-port/cctools/configure --prefix="$WDIR/linux/iphone/" \
 	--host=$ARCH-linux-gnu \
 	--target=aarch64-apple-darwin14 \

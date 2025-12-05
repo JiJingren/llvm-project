@@ -112,7 +112,7 @@ make -j$PROC DESTDIR="$WDIR/linux/iphone/" \
 				|| { echo "[!] ldid build failure"; exit 1; }
 
 echo "[!] Build tapi"
-git clone https://github.com/tpoechtrager/apple-libtapi
+git clone https://github.com/tpoechtrager/apple-libtapi -b 1300.6.5
 cd apple-libtapi
 cmake -Wno-dev -B build-tblgens -G "Ninja" \
 	-DLLVM_ENABLE_PROJECTS="clang" \
@@ -156,7 +156,7 @@ cmake --build build --target install -- -j$PROC \
 	|| { echo "[!] libdispatch build failure"; exit 1; }
 
 echo "[!] Build cctools"
-git clone https://github.com/tpoechtrager/cctools-port
+git clone https://github.com/tpoechtrager/cctools-port -b 1010.6-ld64-951.9
 cd cctools-port/cctools/
 ./configure --prefix="$WDIR/linux/iphone/" \
 	--target=aarch64-apple-darwin14 \
