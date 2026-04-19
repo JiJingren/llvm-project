@@ -188,8 +188,10 @@ FLAGS+=" -I$SYSROOT_PATH/include/c++/$GCC_VERSION/$TARGET_ARCH"
 FLAGS+=" -L$SYSROOT_PATH/lib -L/usr/lib/$TARGET_ARCH"
 FLAGS+=" -L$SYSROOT_PATH/../lib/gcc-cross/$TARGET_ARCH/$GCC_VERSION"
 
+TAPI_VER="1600.0.11.8"
+
 echo "[!] Build tapi"
-git clone --depth=1 https://github.com/tpoechtrager/apple-libtapi -b 1600.0.11.8
+git clone --depth=1 https://github.com/tpoechtrager/apple-libtapi -b $TAPI_VER
 cd apple-libtapi
 # build tapi-catered llvm/clang-tblgen for host with support for host and target
 cmake -Wno-dev -B build-tblgens -G "Ninja" \
@@ -213,7 +215,7 @@ cmake -Wno-dev -B build -G "Ninja" \
 	-DLLVM_INCLUDE_TESTS=OFF \
 	-DLLVM_TARGETS_TO_BUILD="X86;ARM;AArch64" \
 	-DLLVM_ENABLE_WARNINGS=OFF \
-	-DTAPI_FULL_VERSION="$(cat $PWD/VERSION.txt | grep "tapi" | grep -o '[[:digit:]].*')" \
+	-DTAPI_FULL_VERSION="$TAPI_VER" \
 	-DLLVM_TABLEGEN="$PWD/build-tblgens/bin/llvm-tblgen" \
 	-DCLANG_TABLEGEN="$PWD/build-tblgens/bin/clang-tblgen" \
 	-DCLANG_TABLEGEN_EXE="$PWD/build-tblgens/bin/clang-tblgen" \
