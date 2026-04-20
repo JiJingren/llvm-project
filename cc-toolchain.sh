@@ -223,7 +223,7 @@ cmake -Wno-dev -B build -G "Ninja" \
 	-DCMAKE_C_COMPILER="/usr/bin/clang" \
 	-DCMAKE_CXX_COMPILER="/usr/bin/clang++" \
 	-DCMAKE_C_FLAGS="$FLAGS" \
-	-DCMAKE_CXX_FLAGS="-I$PWD/src/llvm/projects/clang/include/ -I$PWD/build/projects/clang/include/ $FLAGS" \
+	-DCMAKE_CXX_FLAGS="-I$PWD/src/llvm/projects/clang/include/ -I$PWD/build/projects/clang/include/ -I$PWD/build-tblgens/include $FLAGS" \
 	-DCMAKE_INSTALL_PREFIX="$WDIR/linux/iphone/" \
 	-S src/llvm
 cmake --build build --target install-libtapi install-tapi-headers install-tapi -- -j$PROC \
