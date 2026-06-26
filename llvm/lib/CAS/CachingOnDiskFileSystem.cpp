@@ -330,7 +330,8 @@ CachingOnDiskFileSystemImpl::makeDirectory(DirectoryEntry &Parent,
   return &Cache->makeDirectory(Parent, TreePath);
 }
 
-#if defined(HAVE_UNISTD_H)
+// Fix
+#if defined(HAVE_UNISTD_H) && !defined(_WIN32)
 // FIXME: sink into llvm::sys::fs?
 #include <unistd.h>
 static Error readLink(const llvm::Twine &Path, SmallVectorImpl<char> &Dest) {
@@ -346,7 +347,7 @@ static Error readLink(const llvm::Twine &Path, SmallVectorImpl<char> &Dest) {
 #else
 // Use real_path implementation for platforms that doesn't have readlink().
 static Error readLink(const llvm::Twine &Path, SmallVectorImpl<char> &Dest) {
-  std::error_code EC = sys::fs::real_path(Path, Dest);
+  std::error_code EC = llvm::sys::fs::real_path(Path, Dest);
   return errorCodeToError(EC);
 }
 #endif
