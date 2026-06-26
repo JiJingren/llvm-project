@@ -49,6 +49,9 @@
 #include <sys/stat.h>
 #endif
 
+// Fix
+#include <cstdint>
+
 namespace llvm {
 namespace sys {
 namespace fs {
