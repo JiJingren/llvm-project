@@ -30,6 +30,10 @@
 #include <type_traits>
 #include <utility>
 
+// Fix
+#include <cstdint>
+#include <cstddef>
+
 namespace llvm {
 
 template <typename T> class ArrayRef;
