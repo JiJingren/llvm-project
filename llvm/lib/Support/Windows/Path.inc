@@ -471,7 +471,9 @@ static std::error_code rename_internal(HANDLE FromHandle, const Twine &To,
   std::copy(ToWide.begin(), ToWide.end(), &RenameInfo.FileName[0]);
 
   SetLastError(ERROR_SUCCESS);
-  if (!SetFileInformationByHandle(FromHandle, FileRenameInfoEx, &RenameInfo,
+
+  // Fix
+  if (!SetFileInformationByHandle(FromHandle, FileRenameInfo, &RenameInfo,
                                   RenameInfoBuf.size())) {
     unsigned Error = GetLastError();
     if (Error == ERROR_SUCCESS)
