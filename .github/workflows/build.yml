@@ -23,13 +23,16 @@ jobs:
         cmake -G Ninja `
           -DCMAKE_BUILD_TYPE=Release `
           -DLLVM_ENABLE_PROJECTS="clang;clang-tools-extra;lld" `
+          -DLLVM_USE_CRT_RELEASE=MT `
+          -DLLVM_PTHREAD_LIBS="" `
           -DCMAKE_INSTALL_PREFIX="${{ github.workspace }}/install_dist" `
           ../llvm
 
     - name: Build and Install with Ninja
       run: |
         cd build
-        ninja
+        $cpu_count = $env:NUMBER_OF_PROCESSORS
+        ninja -j $cpu_count
         ninja install
 
     - name: Upload Artifact
