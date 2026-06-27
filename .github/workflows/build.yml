@@ -1,5 +1,4 @@
 name: Build
-
 on:
   workflow_dispatch:
 
@@ -15,6 +14,18 @@ jobs:
 
     - name: Install Ninja
       run: choco install ninja
+
+    - name: Setup Compiler Cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          ${{ github.workspace }}/build/.ninja_log
+          ${{ github.workspace }}/build/.ninja_deps
+          ${{ github.workspace }}/build/lib
+          ${{ github.workspace }}/build/tools
+        key: ${{ runner.os }}-llvm-all-targets-${{ github.hash }}
+        restore-keys: |
+          ${{ runner.os }}-llvm-all-targets-
 
     - name: Configure CMake
       run: |
@@ -32,11 +43,12 @@ jobs:
       run: |
         cd build
         $cpu_count = $env:NUMBER_OF_PROCESSORS
+        echo "Dynamic CPU cores detected: $cpu_count"
         ninja -j $cpu_count
         ninja install
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: ios-toolchain-windows-all-targets
+        name: ios-toolchain-windows-all-targets-static
         path: ${{ github.workspace }}/install_dist/
