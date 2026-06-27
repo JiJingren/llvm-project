@@ -1,46 +1,39 @@
 name: Build
 
 on:
-  push:
-
-env:
-  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  workflow_dispatch:
 
 jobs:
-  create-release:
-    runs-on: ubuntu-latest
+  build-windows:
+    runs-on: windows-latest
     steps:
-      - uses: actions/checkout@main
-        with:
-          sparse-checkout: .github
+    - name: Checkout Source Code
+      uses: actions/checkout@v4
 
-      - name: Create release
-        run: |
-          TAG="${GITHUB_REF##*/}-${GITHUB_SHA:0:7}"
-          gh release create "$TAG" --draft --title "Draft Release"
+    - name: Set up MSVC (Visual Studio)
+      uses: ilammy/msvc-dev-cmd@v1
 
-  build:
-    needs: create-release
-    strategy:
-      matrix:
-        arch:
-          - "aarch64"
-          - "host"
+    - name: Install Ninja
+      run: choco install ninja
 
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@main
-      - name: Build toolchain
-        run: |
-          if [[ ${{ matrix.arch }} == host ]]; then
-            ./host-toolchain.sh
-            mv -v $HOME/iOSToolchain.tar.xz $HOME/iOSToolchain-$(uname -m).tar.xz
-          else
-            ./cc-toolchain.sh ${{ matrix.arch }}
-            mv -v $HOME/iOSToolchain.tar.xz $HOME/iOSToolchain-${{ matrix.arch }}.tar.xz
-          fi
+    - name: Configure CMake
+      run: |
+        mkdir build
+        cd build
+        cmake -G Ninja `
+          -DCMAKE_BUILD_TYPE=Release `
+          -DLLVM_ENABLE_PROJECTS="clang;clang-tools-extra;lld" `
+          -DCMAKE_INSTALL_PREFIX="${{ github.workspace }}/install_dist" `
+          ../llvm
 
-      - name: Upload toolchain
-        run: |
-          TAG="${GITHUB_REF##*/}-${GITHUB_SHA:0:7}"
-          gh release upload "$TAG" $HOME/iOSToolchain*.tar.xz
+    - name: Build and Install with Ninja
+      run: |
+        cd build
+        ninja
+        ninja install
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ios-toolchain-windows-all-targets
+        path: ${{ github.workspace }}/install_dist/
