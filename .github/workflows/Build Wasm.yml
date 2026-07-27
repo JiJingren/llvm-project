@@ -1,0 +1,71 @@
+name: Build LLVM to WASM
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build-wasm:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build zip
+
+      - name: Setup Emscripten SDK
+        uses: mymindstorm/setup-emsdk@v13
+        with:
+          version: '3.1.61'
+          actions-cache-folder: 'emsdk-cache'
+
+      - name: Build Native Host Tools
+        run: |
+          mkdir llvm-native-build
+          cd llvm-native-build
+          cmake -G Ninja ../llvm \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLLVM_TARGETS_TO_BUILD="ARM;AArch64;X86" \
+            -DLLVM_INCLUDE_TESTS=OFF \
+            -DLLVM_INCLUDE_EXAMPLES=OFF
+          ninja llvm-tblgen
+
+      - name: Cross-Compile Complete LLVM Suite to WASM
+        run: |
+          mkdir llvm-wasm-build
+          cd llvm-wasm-build
+          
+          LDFLAGS="-s ALLOW_MEMORY_GROWTH=1 -s MAXIMUM_MEMORY=4GB -s FORCE_FILESYSTEM=1 -s EXPORTED_RUNTIME_METHODS=['FS','callMain']"
+          
+          emcmake cmake -G Ninja ../llvm \
+            -DCMAKE_BUILD_TYPE=MinSizeRel \
+            -DLLVM_TABLEGEN=$(pwd)/../llvm-native-build/bin/llvm-tblgen \
+            -DLLVM_TARGETS_TO_BUILD="ARM;AArch64;X86" \
+            -DLLVM_BUILD_TOOLS=ON \
+            -DLLVM_INCLUDE_TESTS=OFF \
+            -DLLVM_INCLUDE_EXAMPLES=OFF \
+            -DLLVM_ENABLE_THREADS=OFF \
+            -DCMAKE_EXE_LINKER_FLAGS="$LDFLAGS"
+
+          ninja
+
+      - name: Package Artifacts
+        run: |
+          mkdir -p dist
+          cp -r llvm-wasm-build/bin/* dist/ 2>/dev/null || true
+          
+          zip -r llvm-wasm-suite.zip dist/
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: llvm-wasm-suite
+          path: llvm-wasm-suite.zip
+          retention-days: 7
