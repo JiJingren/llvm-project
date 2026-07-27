@@ -1,4 +1,4 @@
-name: Build LLVM to WASM
+name: Build LLVM Suite to WASM
 
 on:
   push:
@@ -24,7 +24,7 @@ jobs:
         uses: mymindstorm/setup-emsdk@v13
         with:
           version: '3.1.61'
-          no-cache: true 
+          no-cache: true
 
       - name: Build Native Host Tools
         run: |
@@ -35,7 +35,7 @@ jobs:
             -DLLVM_TARGETS_TO_BUILD="ARM;AArch64;X86" \
             -DLLVM_INCLUDE_TESTS=OFF \
             -DLLVM_INCLUDE_EXAMPLES=OFF
-          ninja llvm-tblgen
+          ninja -j$(nproc) llvm-tblgen
 
       - name: Cross-Compile Complete LLVM Suite to WASM
         run: |
@@ -49,12 +49,13 @@ jobs:
             -DLLVM_TABLEGEN=$(pwd)/../llvm-native-build/bin/llvm-tblgen \
             -DLLVM_TARGETS_TO_BUILD="ARM;AArch64;X86" \
             -DLLVM_BUILD_TOOLS=ON \
+            -DLLVM_ENABLE_FORK=OFF \
             -DLLVM_INCLUDE_TESTS=OFF \
             -DLLVM_INCLUDE_EXAMPLES=OFF \
             -DLLVM_ENABLE_THREADS=OFF \
             -DCMAKE_EXE_LINKER_FLAGS="$LDFLAGS"
 
-          ninja
+          ninja -j$(nproc)
 
       - name: Package Artifacts
         run: |
