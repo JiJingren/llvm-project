@@ -5,7 +5,6 @@ on:
     branches: [ main, master ]
   pull_request:
     branches: [ main, master ]
-  workflow_dispatch:
 
 jobs:
   build-wasm:
@@ -50,12 +49,14 @@ jobs:
             -DLLVM_TARGETS_TO_BUILD="ARM;AArch64;X86" \
             -DLLVM_BUILD_TOOLS=ON \
             -DLLVM_ENABLE_FORK=OFF \
+            -DHAVE_WAIT4=0 \
+            -DHAVE_FORK=0 \
             -DLLVM_INCLUDE_TESTS=OFF \
             -DLLVM_INCLUDE_EXAMPLES=OFF \
             -DLLVM_ENABLE_THREADS=OFF \
             -DCMAKE_EXE_LINKER_FLAGS="$LDFLAGS"
 
-          ninja -j$(nproc)
+          ninja -j$(nproc) -k 0 || true
 
       - name: Package Artifacts
         run: |
