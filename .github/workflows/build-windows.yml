@@ -1,0 +1,240 @@
+name: Build Windows iOS toolchain
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag (default: win-<run number>)"
+        required: false
+        default: ""
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/build-windows.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup MSYS2 UCRT64
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            git make autoconf automake libtool pkg-config python
+            mingw-w64-ucrt-x86_64-clang mingw-w64-ucrt-x86_64-lld
+            diffutils patch texinfo bison flex binutils
+            mingw-w64-ucrt-x86_64-libdispatch
+            mingw-w64-ucrt-x86_64-libblocksruntime-swift
+            mingw-w64-ucrt-x86_64-mman-win32 mingw-w64-ucrt-x86_64-dlfcn
+            openssl
+
+      - name: Download prebuilt MSVC clang/lld (llvm-win-8 mirror)
+        shell: pwsh
+        run: |
+          $url = "https://github.com/JiJingren/ios-toolchain-win/releases/download/llvm-win-8/llvm-dist.zip"
+          curl.exe -L --retry 5 --retry-delay 5 -o llvm-windows-macho-8.zip $url
+          if ($LASTEXITCODE -ne 0) { throw "download failed" }
+          Get-Item llvm-windows-macho-8.zip | Select-Object Name,Length
+
+      - name: Extract LLVM dist
+        shell: pwsh
+        run: |
+          & "C:\Program Files\7-Zip\7z.exe" x llvm-windows-macho-8.zip -ollvm-dist -y | Out-Null
+          if (-not (Test-Path "llvm-dist\bin\clang.exe")) { throw "clang.exe missing from llvm dist" }
+          foreach ($d in @("msvcp140.dll","vcruntime140.dll","vcruntime140_1.dll")) {
+            $src = Join-Path $env:SystemRoot "System32\$d"
+            if (-not (Test-Path $src)) {
+              $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+              if (Test-Path $vswhere) {
+                $vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+                if ($vsPath) {
+                  $src = Get-ChildItem "$vsPath\VC\Redist\MSVC\*\x64\Microsoft.VC*.CRT\$d" -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+                }
+              }
+            }
+            if ($src -and (Test-Path $src)) { Copy-Item $src "llvm-dist\bin\$d" -Force; Write-Host "BUNDLED $d" } else { Write-Host "MISSING $d" }
+          }
+          & "llvm-dist\bin\clang.exe" --version
+          Get-ChildItem llvm-dist\bin | Measure-Object | Select-Object Count
+
+      - name: Download libtapi (Release libtapi-v1)
+        shell: pwsh
+        run: |
+          $root = "${{ github.workspace }}"
+          $seven = "C:\Program Files\7-Zip\7z.exe"
+          $url = "https://github.com/JiJingren/ios-toolchain-win/releases/download/libtapi-v1/libtapi-win-ucrt64.zip"
+          curl.exe -L --retry 5 --retry-delay 5 -o libtapi-win-ucrt64.zip $url
+          if ($LASTEXITCODE -ne 0) { throw "libtapi download failed" }
+          Get-Item libtapi-win-ucrt64.zip | Select-Object Name,Length
+          $ext = Join-Path $root "libtapi-raw"
+          if (Test-Path $ext) { Remove-Item $ext -Recurse -Force }
+          & $seven x libtapi-win-ucrt64.zip "-o$ext" -y | Out-Null
+          $dll = Get-ChildItem $ext -Recurse -Filter libtapi.dll | Select-Object -First 1
+          if (-not $dll) { throw "libtapi.dll missing in archive" }
+          $base = $dll.Directory.Parent.FullName
+          Write-Host "libtapi base: $base"
+          $dist = Join-Path $root "libtapi-dist"
+          if (Test-Path $dist) { Remove-Item $dist -Recurse -Force }
+          New-Item -ItemType Directory -Force -Path $dist | Out-Null
+          Copy-Item (Join-Path $base "bin") (Join-Path $dist "bin") -Recurse -Force
+          Copy-Item (Join-Path $base "lib") (Join-Path $dist "lib") -Recurse -Force
+          Copy-Item (Join-Path $base "include") (Join-Path $dist "include") -Recurse -Force
+          Get-ChildItem -Recurse $dist | Measure-Object | Select-Object Count
+
+      - name: Clone cctools-port fork (windows-ucrt64)
+        shell: pwsh
+        run: |
+          git -c core.autocrlf=false clone --depth 1 --branch windows-ucrt64 https://github.com/JiJingren/cctools-port.git cctools-port
+          if ($LASTEXITCODE -ne 0) { throw "cctools clone failed" }
+          Get-ChildItem cctools-port | Select-Object Name
+          Write-Host "Cloned"
+
+      - name: Build cctools (fork windows-ucrt64.sh)
+        shell: msys2 {0}
+        run: |
+          ROOT=$(pwd)
+          export LIBTAPI_DIR=$(cygpath -m "$ROOT/libtapi-dist")
+          export PREFIX=/tmp/cc-install
+          export TARGET=aarch64-apple-darwin11
+          export JOBS=4
+          echo "LIBTAPI_DIR=$LIBTAPI_DIR"
+          set +e
+          ./cctools-port/windows-ucrt64.sh > /tmp/build.log 2>&1
+          RC=$?
+          set -e
+          echo BUILD_RC=$RC
+          grep -a -E "error:|Error [0-9]" /tmp/build.log | head -80 || true
+          tail -40 /tmp/build.log
+          test "$RC" -eq 0
+          test -f /tmp/cc-install/bin/aarch64-apple-darwin11-ld.exe
+
+      - name: Verify cctools
+        shell: msys2 {0}
+        run: |
+          set -e
+          ROOT=$(pwd)
+          BIN=/tmp/cc-install/bin
+          cp "$ROOT/libtapi-dist/bin/libtapi.dll" "$BIN/" && echo LIBTAPI_DLL_COPIED
+          export PATH="$ROOT/libtapi-dist/bin:$PATH"
+          LD="$BIN/aarch64-apple-darwin11-ld.exe"
+          test -x "$LD"
+          "$LD" -v
+          for t in ar as nm otool lipo strip ranlib size strings install_name_tool libtool segedit vtool; do
+            test -x "$BIN/aarch64-apple-darwin11-$t.exe" || { echo "MISSING $t"; exit 1; }
+          done
+          LDMK=cctools-port/cctools/ld64/src/ld/Makefile
+          grep -a -q "TAPI_SUPPORT" "$LDMK" && echo TAPI_DEF_PRESENT || echo TAPI_DEF_MISSING
+          grep -a -q -- "-ltapi" "$LDMK" && echo TAPI_LIB_PRESENT || echo TAPI_LIB_MISSING
+          echo VERIFY_DONE
+          rm -rf "$ROOT/cctools-stage"
+          cp -a /tmp/cc-install "$ROOT/cctools-stage"
+          for d in libBlocksRuntime.dll libdispatch.dll libdl.dll libgcc_s_seh-1.dll libmman.dll libwinpthread-1.dll libstdc++-6.dll libssp-0.dll; do
+            if [ -f "/ucrt64/bin/$d" ]; then cp "/ucrt64/bin/$d" "$ROOT/cctools-stage/bin/"; echo "RUNTIME $d"; fi
+          done
+          echo STAGED
+
+      - name: Smoke test clang + cctools (Mach-O)
+        shell: msys2 {0}
+        run: |
+          set +e
+          ROOT=$(pwd)
+          CLANG="$ROOT/llvm-dist/bin/clang.exe"
+          BIN=/tmp/cc-install/bin
+          cd /tmp
+          printf 'int main(void) { return 0; }\n' > hello.c
+          "$CLANG" --version
+          "$CLANG" -target arm64-apple-macos11 -c hello.c -o hello_arm64.o; echo CC_ARM64_RC=$?
+          "$CLANG" -target x86_64-apple-macos11 -c hello.c -o hello_x86_64.o; echo CC_X64_RC=$?
+          file hello_arm64.o || true
+          "$BIN/aarch64-apple-darwin11-otool.exe" -h hello_arm64.o; echo OTOOL_RC=$?
+          "$BIN/aarch64-apple-darwin11-nm.exe" hello_arm64.o; echo NM_RC=$?
+          "$BIN/aarch64-apple-darwin11-lipo.exe" -info hello_arm64.o; echo LIPO_RC=$?
+          "$BIN/aarch64-apple-darwin11-ar.exe" rcs libhello.a hello_arm64.o; echo AR_RCS_RC=$?
+          "$BIN/aarch64-apple-darwin11-ar.exe" t libhello.a; echo AR_T_RC=$?
+          "$BIN/aarch64-apple-darwin11-ranlib.exe" libhello.a; echo RANLIB_RC=$?
+          "$BIN/aarch64-apple-darwin11-size.exe" hello_arm64.o; echo SIZE_RC=$?
+          cat > libSystem.tbd <<'TBDEOF'
+          --- !tapi-tbd
+          tbd-version: 4
+          targets: [ arm64-macos, x86_64-macos ]
+          install-name: '/usr/lib/libSystem.B.dylib'
+          current-version: 1311.0.0
+          compatibility-version: 1.0.0
+          exports:
+            - targets: [ arm64-macos, x86_64-macos ]
+              symbols: [ dyld_stub_binder ]
+          ...
+          TBDEOF
+          "$BIN/aarch64-apple-darwin11-ld.exe" -arch arm64 -platform_version macos 11.0 11.0 -e _main -o hello_tapi hello_arm64.o -L/tmp -lSystem; echo TAPI_LINK_RC=$?
+          if "$BIN/aarch64-apple-darwin11-ld.exe" -arch arm64 -platform_version macos 11.0 11.0 -e _main -o hello_arm64 hello_arm64.o -L/tmp -lSystem; then
+            echo LD64_LINK_OK
+            "$BIN/aarch64-apple-darwin11-otool.exe" -hv hello_arm64 || true
+          else
+            echo LD64_LINK_SKIPPED
+          fi
+          echo SMOKE_DONE
+          exit 0
+
+      - name: Package zips
+        shell: pwsh
+        run: |
+          $root = "${{ github.workspace }}"
+          $seven = "C:\Program Files\7-Zip\7z.exe"
+          Push-Location "$root\cctools-stage"
+          & $seven a -tzip "$root\cctools-win-ucrt64.zip" "*" "-mx=5" | Out-Null
+          Pop-Location
+          $stage = "$root\stage-ios"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item "$root\llvm-dist\*" $stage -Recurse
+          Copy-Item "$root\cctools-stage\bin\*" "$stage\bin" -Recurse -Force
+          Get-ChildItem "$root\cctools-stage\bin\*.exe" | ForEach-Object {
+            if ($_.Name -match '^aarch64-apple-darwin11-(.+\.exe)$') {
+              $dst = Join-Path "$stage\bin" $Matches[1]
+              if (-not (Test-Path $dst)) { Copy-Item $_.FullName $dst }
+            }
+          }
+          @(
+            "Windows native iOS toolchain",
+            "clang/lld: LLVM built with MSVC (release llvm-win-8)",
+            "cctools: cctools-port 1030.6.3 / ld64 956.6 built in MSYS2 UCRT64",
+            "Prefix: aarch64-apple-darwin11- (unprefixed aliases included in bin)",
+            "Usage: clang -target arm64-apple-ios14 -c hello.c"
+          ) | Set-Content "$stage\toolchain-info.txt"
+          Push-Location $stage
+          & $seven a -tzip "$root\ios-toolchain-win64.zip" "*" "-mx=3" | Out-Null
+          Pop-Location
+          Get-Item "$root\cctools-win-ucrt64.zip","$root\ios-toolchain-win64.zip" | Select-Object Name,Length
+
+      - name: Determine release tag
+        id: tag
+        shell: pwsh
+        run: |
+          $tag = "${{ github.event.inputs.release_tag }}"
+          if ([string]::IsNullOrWhiteSpace($tag)) { $tag = "win-${{ github.run_number }}" }
+          Write-Host "Using tag: $tag"
+          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Create / reuse release and upload assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "${{ steps.tag.outputs.tag }}"
+          gh release view $tag --repo $env:GITHUB_REPOSITORY 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --repo $env:GITHUB_REPOSITORY `
+              --title "Windows iOS toolchain $tag" `
+              --notes "Windows-native iOS cross toolchain. clang/lld built with MSVC (release llvm-win-8); cctools-port 1030.6.3 + ld64 956.6 built in MSYS2 UCRT64. Assets: ios-toolchain-win64.zip (combined), cctools-win-ucrt64.zip (cctools only)."
+          }
+          gh release upload $tag ios-toolchain-win64.zip cctools-win-ucrt64.zip --repo $env:GITHUB_REPOSITORY --clobber
