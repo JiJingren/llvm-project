@@ -1,0 +1,169 @@
+name: Build Windows LLVM (Mach-O capable)
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to upload to (default: win-shared-<run number>)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Setup Ninja
+        uses: seanmiddleditch/gha-setup-ninja@v5
+
+      - name: Cache ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          variant: ccache
+          max-size: 4G
+
+      - name: Configure LLVM
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path build | Out-Null
+          $cmakeArgs = @(
+            "-G", "Ninja",
+            "-S", "llvm",
+            "-B", "build",
+            "-DCMAKE_BUILD_TYPE=Release",
+            "-DCMAKE_C_COMPILER_LAUNCHER=ccache",
+            "-DCMAKE_CXX_COMPILER_LAUNCHER=ccache",
+            "-DLLVM_ENABLE_PROJECTS=clang;lld",
+            "-DLLVM_TARGETS_TO_BUILD=AArch64;ARM;X86",
+            "-DLLVM_ENABLE_ASSERTIONS=OFF",
+            "-DLLVM_ENABLE_TERMINFO=OFF",
+            "-DLLVM_ENABLE_ZLIB=OFF",
+            "-DLLVM_ENABLE_ZSTD=OFF",
+            "-DLLVM_ENABLE_LIBXML2=OFF",
+            "-DLLVM_ENABLE_LIBEDIT=OFF",
+            "-DLLVM_INCLUDE_TESTS=OFF",
+            "-DLLVM_INCLUDE_BENCHMARKS=OFF",
+            "-DLLVM_INCLUDE_EXAMPLES=OFF",
+            "-DLLVM_INCLUDE_DOCS=OFF",
+            "-DBUILD_SHARED_LIBS=ON",
+            "-DCLANG_LINK_CLANG_DYLIB=ON",
+            "-DLLVM_ENABLE_RTTI=ON",
+            "-DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install_dist"
+          )
+          cmake @cmakeArgs
+          # NOTE: Apple Darwin/Mach-O object emission is a *host* capability of
+          # clang (the MachO object writer is always built in), so it is
+          # available regardless of LLVM_TARGETS_TO_BUILD above.
+
+      - name: Build LLVM + clang + lld
+        shell: pwsh
+        run: |
+          $cpu = [Environment]::ProcessorCount
+          Write-Host "Building with $cpu cores"
+          cmake --build build -- -j $cpu
+
+      - name: Install
+        shell: pwsh
+        run: cmake --install build
+
+      - name: Verify Mach-O support
+        shell: pwsh
+        run: |
+          $bin = "${{ github.workspace }}/install_dist/bin"
+          & "$bin\clang.exe" --version
+          & "$bin\clang.exe" --print-targets
+          & "$bin\ld64.lld.exe" --version
+          Set-Content -Path hello.c -Value 'int main(void){return 0;}'
+          & "$bin\clang.exe" -target arm64-apple-macos11 -c hello.c -o hello_arm64.o
+          if ($LASTEXITCODE -ne 0) { throw "clang failed for arm64-apple-macos11" }
+          & "$bin\clang.exe" -target x86_64-apple-macos10.15 -c hello.c -o hello_x86_64.o
+          if ($LASTEXITCODE -ne 0) { throw "clang failed for x86_64-apple-macos10.15" }
+          $out = (& "$bin\llvm-objdump.exe" -f hello_arm64.o 2>&1 | Out-String)
+          Write-Host $out
+          if ($out -notmatch "(?i)mach-o") { throw "arm64 output is not Mach-O" }
+          $out2 = (& "$bin\llvm-objdump.exe" -f hello_x86_64.o 2>&1 | Out-String)
+          Write-Host $out2
+          if ($out2 -notmatch "(?i)mach-o") { throw "x86_64 output is not Mach-O" }
+          Write-Host "Mach-O object emission verified for arm64 and x86_64."
+          $global:LASTEXITCODE = 0
+          exit 0
+
+      - name: Link a Mach-O executable with ld64.lld (best-effort)
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $bin = "${{ github.workspace }}/install_dist/bin"
+          Set-Content -Path hello.c -Value 'int main(void){return 0;}'
+          & "$bin\clang.exe" -target x86_64-apple-macos10.15 -fuse-ld=lld `
+            -nostdlib -Wl,-e,_main -Wl,-platform_version,macos,10.15,10.15 `
+            hello.c -o hello_macho
+          $out = (& "$bin\llvm-objdump.exe" -f hello_macho 2>&1 | Out-String)
+          Write-Host $out
+          if ($out -notmatch "(?i)mach-o") { throw "final executable is not Mach-O" }
+          Write-Host "ld64.lld produced a valid Mach-O executable."
+          $global:LASTEXITCODE = 0
+          exit 0
+
+      - name: Package zip
+        shell: pwsh
+        run: |
+          $stage = "${{ github.workspace }}/package"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item -Recurse "${{ github.workspace }}/install_dist/*" $stage
+          $zip = "${{ github.workspace }}/llvm-windows-macho-${{ github.run_number }}.zip"
+          Compress-Archive -Path "$stage\*" -DestinationPath $zip -CompressionLevel Optimal
+          Write-Host "Created $zip"
+          Get-Item $zip | Select-Object Name,Length
+
+      - name: Upload workflow artifact (backup)
+        uses: actions/upload-artifact@v4
+        with:
+          name: llvm-windows-macho
+          path: ${{ github.workspace }}/llvm-windows-macho-*.zip
+          retention-days: 3
+
+      - name: Determine release tag
+        id: tag
+        shell: pwsh
+        run: |
+          $tag = "${{ github.event.inputs.release_tag }}"
+          if ([string]::IsNullOrWhiteSpace($tag)) { $tag = "win-shared-${{ github.run_number }}" }
+          Write-Host "Using tag: $tag"
+          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Create / reuse release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "${{ steps.tag.outputs.tag }}"
+          $exists = gh release view $tag --repo $env:GITHUB_REPOSITORY 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --repo $env:GITHUB_REPOSITORY `
+              --title "Windows LLVM (Mach-O) $tag" `
+              --notes "Windows-native clang/lld toolchain (LLVM ${{ github.sha }}). Targets: AArch64, ARM, X86. Produces Mach-O for *-apple-* targets."
+          } else {
+            Write-Host "Release $tag already exists, will upload/overwrite asset."
+          }
+          $zip = Get-ChildItem "${{ github.workspace }}/llvm-windows-macho-*.zip" | Select-Object -First 1
+          gh release upload $tag "$($zip.FullName)" --repo $env:GITHUB_REPOSITORY --clobber
+
+      - name: Remove workflow artifact (save space)
+        if: always()
+        uses: geekyeggo/delete-artifact@v5
+        with:
+          name: llvm-windows-macho
+          failOnError: false
